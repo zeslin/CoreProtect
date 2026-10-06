@@ -1,0 +1,81 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build CoreProtect
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Show environment
+        run: |
+          java -version
+          mvn -version
+          git describe --tags --always --dirty
+
+      - name: Build
+        run: mvn -B clean verify
+
+      - name: Find artifact
+        id: artifact
+        shell: bash
+        run: |
+          set -e
+
+          JAR="$(find target -maxdepth 1 -type f -name '*.jar' \
+            ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' \
+            | head -n 1)"
+
+          if [ -z "$JAR" ]; then
+            echo "No JAR found in target/"
+            find target -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+
+          echo "Found artifact: $JAR"
+          echo "path=$JAR" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoreProtect
+          path: ${{ steps.artifact.outputs.path }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: ${{ steps.artifact.outputs.path }}
+
+      - name: Create development release
+        if: github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "Development Build ${{ github.run_number }}"
+          prerelease: true
+          generate_release_notes: true
+          files: ${{ steps.artifact.outputs.path }}
